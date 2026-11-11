@@ -1,13 +1,25 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import {
+  loginUser,
+  registerUser,
+  getCurrentUserFromApi,
+} from '../api/authApi';
+import {
+  getStoredToken,
+  setStoredToken,
+} from '../api/apiClient';
+import {
+  fetchNotifications,
+  markNotificationAsReadApi,
+  markAllNotificationsAsReadApi,
+} from '../api/notificationsApi';
+import {
+  updateFreelancerProfileApi,
+  updateClientProfileApi,
+} from '../api/freelancersApi';
+import {
   getCurrentUser,
   setCurrentUser,
-  getFreelancers,
-  saveFreelancer,
-  getClients,
-  saveClient,
-  getNotifications,
-  initStorage,
 } from '../utils/storage';
 
 const AuthContext = createContext(null);
@@ -17,182 +29,192 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
   const [notifications, setNotifications] = useState([]);
 
-  // Initialize storage and load session
+  // Load active session from API on app mount
   useEffect(() => {
-    initStorage();
-    const storedUser = getCurrentUser();
-    if (storedUser) {
-      setUser(storedUser);
+    async function initSession() {
+      const token = getStoredToken();
+      if (token) {
+        try {
+          const apiUser = await getCurrentUserFromApi();
+          if (apiUser) {
+            setUser(apiUser);
+            setCurrentUser(apiUser);
+            loadUserNotifications();
+            setLoading(false);
+            return;
+          }
+        } catch (err) {
+          console.warn('Token session expired or backend unreachable, checking local session:', err);
+          setStoredToken(null);
+        }
+      }
+
+      // Check cached session
+      const stored = getCurrentUser();
+      if (stored) {
+        setUser(stored);
+      }
+      setLoading(false);
     }
-    refreshNotifications(storedUser?.id);
-    setLoading(false);
+
+    initSession();
   }, []);
 
-  const refreshNotifications = (userId) => {
-    const allNotifs = getNotifications();
-    if (userId) {
-      const userNotifs = allNotifs.filter((n) => n.userId === userId);
-      setNotifications(userNotifs);
-    } else {
-      setNotifications([]);
+  const loadUserNotifications = async () => {
+    try {
+      const notifs = await fetchNotifications();
+      setNotifications(notifs);
+    } catch {
+      // Ignore if user not logged in
     }
   };
 
   const login = async (email, password, role) => {
-    const trimmedEmail = email.trim().toLowerCase();
-    const freelancers = getFreelancers();
-    const clients = getClients();
+    try {
+      const { user: loggedInUser } = await loginUser(email, password);
 
-    let matchedUser = null;
-    if (role === 'freelancer') {
-      matchedUser = freelancers.find(
-        (f) => f.email.toLowerCase() === trimmedEmail && f.password === password
-      );
-    } else if (role === 'client') {
-      matchedUser = clients.find(
-        (c) => c.email.toLowerCase() === trimmedEmail && c.password === password
-      );
-    }
-
-    if (!matchedUser) {
-      // Also check if account exists in the other role
-      const oppositeList = role === 'freelancer' ? clients : freelancers;
-      const existsInOther = oppositeList.some((u) => u.email.toLowerCase() === trimmedEmail);
-      if (existsInOther) {
+      // Validate role consistency if role provided
+      if (role && loggedInUser.role !== role.toLowerCase()) {
+        const expectedRole = loggedInUser.role === 'client' ? 'Client' : 'Freelancer';
         return {
           success: false,
-          message: `This account is registered as a ${role === 'freelancer' ? 'Client' : 'Freelancer'}. Please switch your role toggle above.`,
+          message: `This account is registered as a ${expectedRole}. Please switch your role toggle above.`,
         };
       }
+
+      setUser(loggedInUser);
+      setCurrentUser(loggedInUser);
+      loadUserNotifications();
+      return { success: true, user: loggedInUser };
+    } catch (err) {
       return {
         success: false,
-        message: 'Invalid email or password. Please verify your credentials or use the demo login.',
+        message: err.message || 'Invalid email or password. Please verify your credentials.',
       };
     }
-
-    // Success
-    const sessionUser = { ...matchedUser };
-    delete sessionUser.password; // Do not keep password in active session state
-    setUser(sessionUser);
-    setCurrentUser(sessionUser);
-    refreshNotifications(sessionUser.id);
-    return { success: true, user: sessionUser };
   };
 
   const registerFreelancer = async (data) => {
-    const freelancers = getFreelancers();
-    const existing = freelancers.find((f) => f.email.toLowerCase() === data.email.trim().toLowerCase());
-    if (existing) {
-      return { success: false, message: 'An account with this email already exists as a freelancer.' };
+    try {
+      const payload = {
+        fullName: data.name?.trim(),
+        email: data.email?.trim(),
+        password: data.password,
+        role: 'Freelancer',
+        professionalTitle: data.title?.trim(),
+        skills: Array.isArray(data.skills) ? data.skills.join(', ') : data.skills,
+        hourlyRate: Number(data.hourlyRate) || 800,
+        location: data.location || 'Bengaluru, Karnataka',
+      };
+
+      const { user: registeredUser } = await registerUser(payload);
+      setUser(registeredUser);
+      setCurrentUser(registeredUser);
+      loadUserNotifications();
+      return { success: true, user: registeredUser };
+    } catch (err) {
+      return {
+        success: false,
+        message: err.message || 'Registration failed. Please check your details.',
+      };
     }
-
-    const newFreelancer = {
-      id: `free-${Date.now()}`,
-      name: data.name.trim(),
-      email: data.email.trim().toLowerCase(),
-      password: data.password,
-      role: 'freelancer',
-      title: data.title.trim(),
-      avatar: data.avatar || `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(data.name)}`,
-      bio: data.bio || 'Passionate professional ready to deliver top-notch project work.',
-      hourlyRate: Number(data.hourlyRate) || 1000,
-      rating: 5.0,
-      reviewsCount: 0,
-      skills: Array.isArray(data.skills)
-        ? data.skills
-        : data.skills.split(',').map((s) => s.trim()).filter(Boolean),
-      experienceYears: Number(data.experienceYears) || 1,
-      location: data.location || 'India',
-      completedProjectsCount: 0,
-      totalEarned: 0,
-      memberSince: new Date().toISOString().split('T')[0],
-      availability: data.availability || 'Available full-time',
-      profileCompletion: 80,
-      portfolio: [],
-    };
-
-    saveFreelancer(newFreelancer);
-    const sessionUser = { ...newFreelancer };
-    delete sessionUser.password;
-    setUser(sessionUser);
-    setCurrentUser(sessionUser);
-    refreshNotifications(sessionUser.id);
-    return { success: true, user: sessionUser };
   };
 
   const registerClient = async (data) => {
-    const clients = getClients();
-    const existing = clients.find((c) => c.email.toLowerCase() === data.email.trim().toLowerCase());
-    if (existing) {
-      return { success: false, message: 'An account with this email already exists as a client.' };
+    try {
+      const payload = {
+        fullName: data.name?.trim(),
+        email: data.email?.trim(),
+        password: data.password,
+        role: 'Client',
+        companyName: data.companyName?.trim(),
+        industry: data.industry || 'Technology & Software',
+        location: data.location || 'Mumbai, Maharashtra',
+      };
+
+      const { user: registeredUser } = await registerUser(payload);
+      setUser(registeredUser);
+      setCurrentUser(registeredUser);
+      loadUserNotifications();
+      return { success: true, user: registeredUser };
+    } catch (err) {
+      return {
+        success: false,
+        message: err.message || 'Registration failed. Please check your details.',
+      };
     }
-
-    const newClient = {
-      id: `client-${Date.now()}`,
-      name: data.name.trim(),
-      companyName: data.companyName.trim(),
-      email: data.email.trim().toLowerCase(),
-      password: data.password,
-      role: 'client',
-      avatar: data.avatar || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(data.companyName)}`,
-      bio: data.bio || 'Hiring top tier freelancers to build impactful digital solutions.',
-      industry: data.industry || 'Technology & Software',
-      location: data.location || 'India',
-      website: data.website || '',
-      rating: 5.0,
-      projectsPostedCount: 0,
-      totalSpent: 0,
-      memberSince: new Date().toISOString().split('T')[0],
-      verifiedPayment: true,
-    };
-
-    saveClient(newClient);
-    const sessionUser = { ...newClient };
-    delete sessionUser.password;
-    setUser(sessionUser);
-    setCurrentUser(sessionUser);
-    refreshNotifications(sessionUser.id);
-    return { success: true, user: sessionUser };
   };
 
   const logout = () => {
+    setStoredToken(null);
     setUser(null);
     setCurrentUser(null);
     setNotifications([]);
   };
 
-  const updateProfile = (updatedFields) => {
+  const updateProfile = async (updatedFields) => {
     if (!user) return;
-    const updatedUser = { ...user, ...updatedFields };
-    setUser(updatedUser);
-    setCurrentUser(updatedUser);
 
-    if (user.role === 'freelancer') {
-      saveFreelancer(updatedUser);
-    } else {
-      saveClient(updatedUser);
+    try {
+      if (user.role === 'freelancer') {
+        const res = await updateFreelancerProfileApi({
+          fullName: updatedFields.name || updatedFields.fullName,
+          professionalTitle: updatedFields.title || updatedFields.professionalTitle,
+          bio: updatedFields.bio,
+          skills: Array.isArray(updatedFields.skills) ? updatedFields.skills.join(', ') : updatedFields.skills,
+          hourlyRate: updatedFields.hourlyRate ? Number(updatedFields.hourlyRate) : undefined,
+          location: updatedFields.location,
+          portfolioUrl: updatedFields.portfolioUrl,
+          availability: updatedFields.availability,
+        });
+        const updated = { ...user, ...res };
+        setUser(updated);
+        setCurrentUser(updated);
+      } else {
+        await updateClientProfileApi({
+          fullName: updatedFields.name || updatedFields.fullName,
+          companyName: updatedFields.companyName,
+          companyDescription: updatedFields.bio || updatedFields.companyDescription,
+          industry: updatedFields.industry,
+          location: updatedFields.location,
+          website: updatedFields.website,
+        });
+        const updated = { ...user, ...updatedFields };
+        setUser(updated);
+        setCurrentUser(updated);
+      }
+    } catch (err) {
+      console.error('Failed to update profile on backend:', err);
+      // Optimistic local update
+      const updatedUser = { ...user, ...updatedFields };
+      setUser(updatedUser);
+      setCurrentUser(updatedUser);
     }
   };
 
-  const quickLogin = (role) => {
-    if (role === 'freelancer') {
-      const freelancers = getFreelancers();
-      const demoFree = freelancers[0];
-      const sessionUser = { ...demoFree };
-      delete sessionUser.password;
-      setUser(sessionUser);
-      setCurrentUser(sessionUser);
-      refreshNotifications(sessionUser.id);
-      return sessionUser;
-    } else {
-      const clients = getClients();
-      const demoClient = clients[0];
-      const sessionUser = { ...demoClient };
-      delete sessionUser.password;
-      setUser(sessionUser);
-      setCurrentUser(sessionUser);
-      refreshNotifications(sessionUser.id);
-      return sessionUser;
+  const quickLogin = async (role) => {
+    const email = role === 'freelancer' ? 'freelancer@skillbridge.in' : 'client@skillbridge.in';
+    const password = 'password123';
+    return await login(email, password, role);
+  };
+
+  const markNotificationAsRead = async (id) => {
+    try {
+      await markNotificationAsReadApi(id);
+      setNotifications((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, read: true } : n))
+      );
+    } catch (err) {
+      console.error('Error marking notification as read:', err);
+    }
+  };
+
+  const markAllNotificationsAsRead = async () => {
+    try {
+      await markAllNotificationsAsReadApi();
+      setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    } catch (err) {
+      console.error('Error marking all notifications as read:', err);
     }
   };
 
@@ -213,7 +235,9 @@ export function AuthProvider({ children }) {
         quickLogin,
         notifications,
         unreadCount,
-        refreshNotifications: () => refreshNotifications(user?.id),
+        refreshNotifications: loadUserNotifications,
+        markNotificationAsRead,
+        markAllNotificationsAsRead,
       }}
     >
       {children}
