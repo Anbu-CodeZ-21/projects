@@ -1,14 +1,8 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import logo from "../assets/skillbridge-logo";
 
-/**
- * SkillBridge Official Brand Logo Component
- * Matches the user-provided brand identity:
- * - Left figure & "Skill": Deep Forest Green (#0D3B2E)
- * - Right figure & "Bridge": Warm Amber Gold (#C78C3A)
- * - Arch Bridge connecting Freelancers and Clients
- * - Tagline: "Freelancer & Client Work Verification Platform"
- */
+
 
 export function LogoEmblem({ size = 42, className = '' }) {
   return (
@@ -104,7 +98,7 @@ export default function Logo({
       {variant === 'image' ? (
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
           <img
-            src="/skillbridge-logo.jpg"
+            src={logo}
             alt="SkillBridge – Freelancer Work Verification Platform"
             style={{
               height: size === 'sm' ? '36px' : size === 'lg' ? '68px' : size === 'xl' ? '92px' : '48px',
@@ -133,7 +127,7 @@ export default function Logo({
             }}
           >
             <img
-              src="/skillbridge-logo.jpg"
+              src={logo}
               alt="SkillBridge Logo Emblem"
               style={{
                 width: '100%',

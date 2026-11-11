@@ -1,6 +1,7 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { Briefcase, ShieldCheck, Heart, ExternalLink, IndianRupee } from 'lucide-react';
+import logo from "../assets/skillbridge-logo";
 
 export default function Footer() {
   return (
@@ -26,7 +27,7 @@ export default function Footer() {
                 }}
               >
                 <img
-                  src="/skillbridge-logo.jpg"
+                  src={logo}
                   alt="SkillBridge Logo"
                   style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scale(1.25) translateY(2%)' }}
                 />
